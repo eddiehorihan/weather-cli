@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="weather-cli",
         description=(
-            "Show current conditions and a short USA forecast from the "
+            "Show current conditions and a multi-day USA forecast from the "
             "National Weather Service. With no place, asks you for a city and state."
         ),
         epilog=USAGE_EXAMPLES,

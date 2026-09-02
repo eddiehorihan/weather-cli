@@ -8,8 +8,15 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 
 from weather_cli.cli import run
-from weather_cli.client import fetch_report
-from weather_cli.display import compass, render_ascii, render_json
+from weather_cli.client import FORECAST_PERIODS, fetch_report
+from weather_cli.display import (
+    compass,
+    group_forecast,
+    render_ascii,
+    render_json,
+    weather_icon,
+)
+from weather_cli.models import ForecastPeriod
 from weather_cli.place import parse_place
 
 
@@ -37,39 +44,140 @@ POINTS = {
     }
 }
 
+def _nws_period(
+    name: str,
+    *,
+    daytime: bool,
+    temp: int,
+    short: str,
+    detail: str,
+    wind_speed: str = "5 mph",
+    wind_dir: str = "ENE",
+) -> dict:
+    return {
+        "name": name,
+        "isDaytime": daytime,
+        "temperature": temp,
+        "temperatureUnit": "F",
+        "windSpeed": wind_speed,
+        "windDirection": wind_dir,
+        "shortForecast": short,
+        "detailedForecast": detail,
+    }
+
+
 FORECAST = {
     "properties": {
         "periods": [
-            {
-                "name": "Tonight",
-                "isDaytime": False,
-                "temperature": 67,
-                "temperatureUnit": "F",
-                "windSpeed": "5 mph",
-                "windDirection": "NNE",
-                "shortForecast": "Mostly Clear",
-                "detailedForecast": "Mostly clear, with a low around 67.",
-            },
-            {
-                "name": "Wednesday",
-                "isDaytime": True,
-                "temperature": 83,
-                "temperatureUnit": "F",
-                "windSpeed": "5 mph",
-                "windDirection": "ENE",
-                "shortForecast": "Mostly Sunny",
-                "detailedForecast": "Mostly sunny, with a high near 83.",
-            },
-            {
-                "name": "Wednesday Night",
-                "isDaytime": False,
-                "temperature": 68,
-                "temperatureUnit": "F",
-                "windSpeed": "5 mph",
-                "windDirection": "ENE",
-                "shortForecast": "Partly Cloudy",
-                "detailedForecast": "Partly cloudy, with a low around 68.",
-            },
+            _nws_period(
+                "Tonight",
+                daytime=False,
+                temp=67,
+                short="Mostly Clear",
+                detail="Mostly clear, with a low around 67.",
+                wind_dir="NNE",
+            ),
+            _nws_period(
+                "Wednesday",
+                daytime=True,
+                temp=83,
+                short="Mostly Sunny",
+                detail="Mostly sunny, with a high near 83.",
+            ),
+            _nws_period(
+                "Wednesday Night",
+                daytime=False,
+                temp=68,
+                short="Partly Cloudy",
+                detail="Partly cloudy, with a low around 68.",
+            ),
+            _nws_period(
+                "Thursday",
+                daytime=True,
+                temp=81,
+                short="Mostly Sunny",
+                detail="Mostly sunny, with a high near 81. A slight chance of showers after 3pm.",
+            ),
+            _nws_period(
+                "Thursday Night",
+                daytime=False,
+                temp=66,
+                short="Mostly Clear",
+                detail="Mostly clear, with a low around 66.",
+            ),
+            _nws_period(
+                "Friday",
+                daytime=True,
+                temp=79,
+                short="Partly Sunny",
+                detail="Partly sunny, with a high near 79.",
+            ),
+            _nws_period(
+                "Friday Night",
+                daytime=False,
+                temp=64,
+                short="Mostly Cloudy",
+                detail="Mostly cloudy, with a low around 64.",
+            ),
+            _nws_period(
+                "Saturday",
+                daytime=True,
+                temp=77,
+                short="Chance Showers",
+                detail=(
+                    "A chance of showers. Partly sunny, with a high near 77. "
+                    "Chance of precipitation is 40%."
+                ),
+            ),
+            _nws_period(
+                "Saturday Night",
+                daytime=False,
+                temp=62,
+                short="Showers Likely",
+                detail="Showers likely, with a low around 62.",
+            ),
+            _nws_period(
+                "Sunday",
+                daytime=True,
+                temp=74,
+                short="Partly Sunny",
+                detail="Partly sunny, with a high near 74.",
+            ),
+            _nws_period(
+                "Sunday Night",
+                daytime=False,
+                temp=60,
+                short="Mostly Clear",
+                detail="Mostly clear, with a low around 60.",
+            ),
+            _nws_period(
+                "Monday",
+                daytime=True,
+                temp=76,
+                short="Sunny",
+                detail="Sunny, with a high near 76.",
+            ),
+            _nws_period(
+                "Monday Night",
+                daytime=False,
+                temp=61,
+                short="Clear",
+                detail="Clear, with a low around 61.",
+            ),
+            _nws_period(
+                "Tuesday",
+                daytime=True,
+                temp=78,
+                short="Mostly Sunny",
+                detail="Mostly sunny, with a high near 78.",
+            ),
+            _nws_period(
+                "Tuesday Night",
+                daytime=False,
+                temp=63,
+                short="Partly Cloudy",
+                detail="Partly cloudy, with a low around 63.",
+            ),
         ]
     }
 }
@@ -150,19 +258,79 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(payload["current"]["temperature_f"], 71.6)
         self.assertEqual(payload["current"]["station_id"], "KMSP")
         self.assertEqual(payload["current"]["humidity_percent"], 54)
-        self.assertEqual(len(payload["forecast"]), 3)
+        self.assertEqual(set(payload), {"ok", "source", "location", "current", "forecast"})
+        self.assertEqual(FORECAST_PERIODS, 14)
+        self.assertEqual(len(payload["forecast"]), 14)
         self.assertEqual(payload["forecast"][0]["name"], "Tonight")
         self.assertEqual(payload["forecast"][1]["short_forecast"], "Mostly Sunny")
+        self.assertIn("detailed_forecast", payload["forecast"][0])
+        self.assertEqual(payload["forecast"][7]["name"], "Saturday")
 
     def test_ascii_includes_current_and_forecast(self) -> None:
         report = fetch_report(parse_place("Minneapolis MN"), fetch=fake_fetch)
-        art = render_ascii(report, color=False)
+        art = render_ascii(report, color=False, width=76)
         self.assertIn("Minneapolis, MN", art)
         self.assertIn("71.6°F", art)
         self.assertIn("Clear", art)
         self.assertIn("Tonight", art)
         self.assertIn("Mostly Sunny", art)
         self.assertIn("weather-cli", art)
+        self.assertIn("Forecast", art)
+        self.assertIn("wind", art)
+        self.assertIn("humidity", art)
+        self.assertIn("KMSP", art)
+        self.assertIn("Thursday", art)
+        self.assertIn("Saturday", art)
+        self.assertIn("Mostly clear, with a low around 67.", art)
+        self.assertIn("A slight chance of showers after 3pm.", art)
+        self.assertIn("high", art)
+        self.assertIn("low", art)
+        self.assertNotIn("short forecast", art.lower())
+
+    def test_ascii_grey_white_not_rainbow(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=True, width=76)
+        self.assertNotIn("\033[36m", art)
+        self.assertNotIn("\033[33m", art)
+        self.assertNotIn("\033[34m", art)
+        self.assertIn("\033[90m", art)
+        self.assertIn("\033[97m", art)
+
+    def test_ascii_narrow_width_keeps_box(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=False, width=50)
+        rows = [row for row in art.splitlines() if row]
+        lengths = {len(row) for row in rows}
+        self.assertEqual(len(lengths), 1)
+        self.assertLessEqual(next(iter(lengths)), 56)
+
+    def test_weather_icons_are_balanced(self) -> None:
+        samples = (
+            ("Thunderstorms", True),
+            ("Snow", True),
+            ("Rain Showers", True),
+            ("Fog", True),
+            ("Partly Cloudy", True),
+            ("Overcast", True),
+            ("Clear", False),
+            ("Sunny", True),
+        )
+        for text, daytime in samples:
+            icon = weather_icon(text, is_daytime=daytime)
+            self.assertEqual(len(icon), 5, text)
+            self.assertTrue(all(len(line) == 12 for line in icon), text)
+
+    def test_group_forecast_pairs_day_and_night(self) -> None:
+        periods = [
+            ForecastPeriod("Today", True, 80, "F", "5 mph S", "Sunny", "Sunny."),
+            ForecastPeriod("Tonight", False, 60, "F", "3 mph S", "Clear", "Clear."),
+            ForecastPeriod("Wednesday", True, 83, "F", "5 mph E", "Sunny", "Sunny."),
+            ForecastPeriod("Wednesday Night", False, 68, "F", "5 mph E", "Cloudy", "Cloudy."),
+        ]
+        groups = group_forecast(periods)
+        self.assertEqual([label for label, _ in groups], ["Today", "Wednesday"])
+        self.assertEqual(len(groups[0][1]), 2)
+        self.assertEqual(len(groups[1][1]), 2)
 
     def test_unknown_place(self) -> None:
         with self.assertRaises(RuntimeError):
@@ -200,7 +368,7 @@ class CliTests(unittest.TestCase):
         text = stdout.getvalue()
         self.assertIn("City and state", text)
         self.assertIn("Minneapolis, MN", text)
-        self.assertIn("short forecast", text)
+        self.assertIn("Forecast", text)
 
     def test_noninteractive_missing_place(self) -> None:
         stdout = io.StringIO()

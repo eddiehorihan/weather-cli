@@ -2,8 +2,9 @@
 
 A easy to use, fun weather CLI for agents and you.
 
-Type a US city and state, get current conditions and a short forecast in a
-readable ASCII box. Add `--json` when a script or agent needs structured data.
+Type a US city and state, get current conditions and a multi-day forecast in a
+quiet grey/white ASCII panel. Add `--json` when a script or agent needs
+structured data.
 
 v1 is **USA only**. Weather data comes from the
 [National Weather Service](https://www.weather.gov/) (`api.weather.gov`).
@@ -145,8 +146,9 @@ weather-cli --no-color "Denver, CO"
 
 ## What you get
 
-1. **Current conditions** — temperature, short text, wind, humidity, station
-2. **Short forecast** — the next few NWS periods (today / tonight / coming days)
+1. **Current conditions** — place, temperature, condition, then wind / humidity / station / time
+2. **Forecast** — several full days of NWS periods, grouped by day, each with a
+   short summary and a wrapped line of official detail
 
 No severe-alerts product in v1.
 
