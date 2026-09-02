@@ -12,9 +12,31 @@ Places are geocoded with [OpenStreetMap Nominatim](https://nominatim.org/)
 
 ## Install on macOS
 
-You need Python 3.9+ (Apple Silicon and Intel are both fine).
+You need Python 3.9+ and [Homebrew](https://brew.sh) (Apple Silicon and Intel
+are both fine). Copy and paste the commands as written — no `$` in front.
 
-**Recommended — [pipx](https://pipx.pypa.io/)** so `weather-cli` lands on your PATH:
+**One easy path** — a script that installs [pipx](https://pipx.pypa.io/) via
+Homebrew if needed, runs `pipx ensurepath`, and retries with `--backend pip`
+when pipx's `uv` is too old:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eddiehorihan/weather-cli/main/scripts/install-macos.sh | bash
+```
+
+Already cloned this repo? Same installer, from the repo root:
+
+```bash
+bash scripts/install-macos.sh
+```
+
+The installer does not install Homebrew for you. If `weather-cli` is missing
+after it finishes, run `pipx ensurepath`, then open a new terminal.
+
+```bash
+weather-cli --help
+```
+
+### Manual pipx
 
 ```bash
 brew install pipx
@@ -22,20 +44,22 @@ pipx ensurepath
 pipx install git+https://github.com/eddiehorihan/weather-cli.git
 ```
 
-Open a new terminal, then:
+If pipx errors that it needs a newer `uv` (for example `uv>=0.9.17` but yours
+is older), retry with the pip backend — `--backend` goes after `install`:
 
 ```bash
-weather-cli --help
+pipx install git+https://github.com/eddiehorihan/weather-cli.git --backend pip
 ```
 
-**Or pip** (user install):
+To reinstall, put `--force` after `install` (not before `pipx` and not after
+the URL only):
 
 ```bash
-python3 -m pip install --user git+https://github.com/eddiehorihan/weather-cli.git
+pipx install --force git+https://github.com/eddiehorihan/weather-cli.git --backend pip
 ```
 
-If `weather-cli` is not found after pip, add Python's user base bin dir to PATH
-(Apple Silicon Homebrew Python often uses `~/Library/Python/3.x/bin`).
+Do not use `python3 -m pip install --user` on Homebrew Python. That hits
+PEP 668 (`externally-managed-environment`). pipx is the supported path.
 
 No API keys or secrets. The client sends a `User-Agent` identifying this app,
 which NWS and Nominatim both require.
@@ -45,7 +69,7 @@ which NWS and Nominatim both require.
 Interactive (default) — just run it and type a place:
 
 ```text
-$ weather-cli
+weather-cli
 
   weather-cli  ·  USA weather from the National Weather Service
   City and state (e.g. Minneapolis, MN): Minneapolis, MN
@@ -129,6 +153,8 @@ No severe-alerts product in v1.
 ## Develop / test
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 python3 -m pip install -e .
 python3 -m unittest discover -s tests -v
 ```
