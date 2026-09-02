@@ -71,7 +71,16 @@ def _visible(text: str) -> str:
 
 
 def _squeezed(text: str) -> str:
-    return " ".join(_visible(text).replace("\n", " ").split())
+    parts: list[str] = []
+    for row in text.splitlines():
+        plain = _visible(row).strip()
+        if plain.startswith("│") and plain.endswith("│"):
+            plain = plain[1:-1].strip()
+        elif plain.startswith(("╭", "╰")):
+            continue
+        if plain:
+            parts.append(plain)
+    return " ".join(" ".join(parts).split())
 
 
 def _card_rows(art: str) -> list[str]:
