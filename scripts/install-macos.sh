@@ -14,9 +14,8 @@ REPO_SPEC="git+${REPO_GIT_URL}"
 APP_NAME="weather-cli"
 MIN_UV="0.9.17"
 
-# pipx apps land here; ensurepath adds this to the login shell, not always
-# to the current one.
-LOCAL_BIN="${HOME}/.local/bin"
+# Documented pipx default when PIPX_BIN_DIR is unset.
+DEFAULT_PIPX_BIN_DIR="${HOME}/.local/bin"
 
 last_status=0
 
@@ -90,6 +89,70 @@ pipx_bin() {
   else
     printf '%s' "pipx"
   fi
+}
+
+expand_user_path() {
+  local p="$1"
+  case "$p" in
+    "~")
+      printf '%s' "$HOME"
+      ;;
+    ~/*)
+      printf '%s' "${HOME}/${p#~/}"
+      ;;
+    *)
+      printf '%s' "$p"
+      ;;
+  esac
+}
+
+# Pull a bin-dir path out of `pipx environment` / `--value PIPX_BIN_DIR` text.
+parse_pipx_bin_from_text() {
+  local raw="$1"
+  local line candidate=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      PIPX_BIN_DIR=*)
+        candidate="${line#PIPX_BIN_DIR=}"
+        candidate=$(printf '%s' "$candidate" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        ;;
+      /*|~/*|./*)
+        candidate="$line"
+        ;;
+    esac
+  done <<PARSE
+$raw
+PARSE
+  printf '%s' "$candidate"
+}
+
+# Prefer pipx's own answer, then PIPX_BIN_DIR, then ~/.local/bin.
+# stdout is the directory only (no log lines).
+resolve_pipx_bin_dir() {
+  local px raw parsed
+  px=$(pipx_bin)
+
+  if [[ -n "$px" ]] && { [[ -x "$px" ]] || have "$px"; }; then
+    raw=$("$px" environment --value PIPX_BIN_DIR 2>/dev/null) || raw=""
+    parsed=$(parse_pipx_bin_from_text "$raw")
+    if [[ -z "$parsed" ]]; then
+      raw=$("$px" environment 2>/dev/null) || raw=""
+      parsed=$(parse_pipx_bin_from_text "$raw")
+    fi
+    if [[ -n "$parsed" ]]; then
+      expand_user_path "$parsed"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${PIPX_BIN_DIR:-}" ]]; then
+    expand_user_path "$PIPX_BIN_DIR"
+    return 0
+  fi
+
+  printf '%s' "$DEFAULT_PIPX_BIN_DIR"
 }
 
 print_pipx_fix() {
@@ -173,7 +236,9 @@ ensure_pipx() {
 }
 
 ensure_pipx_path() {
-  export PATH="${LOCAL_BIN}:${PATH}"
+  local apps_bin
+  apps_bin=$(resolve_pipx_bin_dir)
+  export PATH="${apps_bin}:${PATH}"
   if have brew; then
     eval "$(brew shellenv 2>/dev/null)" || true
   fi
@@ -185,7 +250,12 @@ ensure_pipx_path() {
     err "then open a new terminal."
   fi
   # ensurepath updates the login profile; this session still needs the dir.
-  export PATH="${LOCAL_BIN}:${PATH}"
+  # Re-resolve in case PIPX_BIN_DIR / pipx config differs from ~/.local/bin.
+  apps_bin=$(resolve_pipx_bin_dir)
+  export PATH="${apps_bin}:${PATH}"
+  if [[ "$apps_bin" != "$DEFAULT_PIPX_BIN_DIR" ]]; then
+    log "pipx app directory is ${apps_bin}."
+  fi
 }
 
 # Install (or reinstall) from GitHub. On the uv-version pipx failure,
@@ -232,7 +302,9 @@ pipx_install_weather_cli() {
 
 verify_weather_cli() {
   local bin=""
-  export PATH="${LOCAL_BIN}:${PATH}"
+  local apps_bin
+  apps_bin=$(resolve_pipx_bin_dir)
+  export PATH="${apps_bin}:${PATH}"
 
   if bin=$(command -v "$APP_NAME" 2>/dev/null); then
     log ""
@@ -249,16 +321,16 @@ verify_weather_cli() {
     return 0
   fi
 
-  if [[ -x "${LOCAL_BIN}/${APP_NAME}" ]]; then
+  if [[ -x "${apps_bin}/${APP_NAME}" ]]; then
     err ""
-    err "${APP_NAME} is installed at ${LOCAL_BIN}/${APP_NAME}"
+    err "${APP_NAME} is installed at ${apps_bin}/${APP_NAME}"
     err "but that folder is not on PATH in this session."
     err "Fix:"
     err "  pipx ensurepath"
     err "Then open a new terminal. In this one you can run:"
-    err "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    err "  export PATH=\"${apps_bin}:\$PATH\""
     err ""
-    "${LOCAL_BIN}/${APP_NAME}" --help
+    "${apps_bin}/${APP_NAME}" --help
     return 0
   fi
 
@@ -270,6 +342,9 @@ verify_weather_cli() {
   err "Then open a new terminal and try:"
   err "  ${APP_NAME} --help"
   err "If that still fails: pipx list"
+  if [[ "$apps_bin" != "$DEFAULT_PIPX_BIN_DIR" ]]; then
+    err "pipx app directory is ${apps_bin} (PIPX_BIN_DIR / pipx environment)."
+  fi
   return 1
 }
 
@@ -383,11 +458,145 @@ MOCK
   rm -rf "$tmpdir"
   unset WEATHER_CLI_PIPX WEATHER_CLI_PIPX_LOG
 
+  if ! test_custom_pipx_bin_dir; then
+    failed=1
+  fi
+
   if [[ "$failed" -ne 0 ]]; then
     err "self-test failed"
     return 1
   fi
   log "self-test passed"
+  return 0
+}
+
+# Covers Codex P2: honor PIPX_BIN_DIR / `pipx environment` instead of
+# assuming ~/.local/bin, and put that dir on PATH before verify.
+test_custom_pipx_bin_dir() {
+  local failed=0
+  local tmpdir custom mock got saved_path
+  local saved_pipx_bin_dir="${PIPX_BIN_DIR-}"
+  saved_path="$PATH"
+  tmpdir=$(mktemp -d)
+  custom="${tmpdir}/custom-bin"
+  mkdir -p "$custom"
+
+  cat > "${custom}/${APP_NAME}" <<'FAKE'
+#!/bin/sh
+echo "weather-cli fake --help"
+exit 0
+FAKE
+  chmod +x "${custom}/${APP_NAME}"
+
+  mock="${tmpdir}/pipx-no-env"
+  cat > "$mock" <<'MOCK'
+#!/usr/bin/env bash
+echo "unknown command: environment" >&2
+exit 2
+MOCK
+  chmod +x "$mock"
+  WEATHER_CLI_PIPX="$mock"
+  unset PIPX_BIN_DIR
+  export WEATHER_CLI_PIPX
+  got=$(resolve_pipx_bin_dir)
+  if [[ "$got" == "$DEFAULT_PIPX_BIN_DIR" ]]; then
+    log "ok: default pipx bin dir is ~/.local/bin"
+  else
+    err "FAIL: default bin dir: got ${got}"
+    failed=1
+  fi
+
+  PIPX_BIN_DIR="$custom"
+  export PIPX_BIN_DIR
+  got=$(resolve_pipx_bin_dir)
+  if [[ "$got" == "$custom" ]]; then
+    log "ok: PIPX_BIN_DIR env used when pipx environment is unavailable"
+  else
+    err "FAIL: PIPX_BIN_DIR fallback: got ${got} want ${custom}"
+    failed=1
+  fi
+
+  mock="${tmpdir}/pipx-env"
+  cat > "$mock" <<MOCK
+#!/usr/bin/env bash
+if [[ "\$1" == "environment" ]]; then
+  if [[ "\${2:-}" == "--value" && "\${3:-}" == "PIPX_BIN_DIR" ]]; then
+    printf '%s\n' "${custom}"
+    exit 0
+  fi
+  printf 'PIPX_BIN_DIR=%s\n' "${custom}"
+  exit 0
+fi
+exit 0
+MOCK
+  chmod +x "$mock"
+  WEATHER_CLI_PIPX="$mock"
+  PIPX_BIN_DIR="${tmpdir}/should-not-win"
+  export WEATHER_CLI_PIPX PIPX_BIN_DIR
+  got=$(resolve_pipx_bin_dir)
+  if [[ "$got" == "$custom" ]]; then
+    log "ok: prefers pipx environment --value PIPX_BIN_DIR"
+  else
+    err "FAIL: pipx environment: got ${got} want ${custom}"
+    failed=1
+  fi
+
+  mock="${tmpdir}/pipx-env-plain"
+  cat > "$mock" <<MOCK
+#!/usr/bin/env bash
+if [[ "\$1" == "environment" ]]; then
+  if [[ "\${2:-}" == "--value" ]]; then
+    echo "unrecognized arguments: --value" >&2
+    exit 2
+  fi
+  printf 'PIPX_HOME=/tmp/pipx\nPIPX_BIN_DIR=%s\n' "${custom}"
+  exit 0
+fi
+exit 0
+MOCK
+  chmod +x "$mock"
+  WEATHER_CLI_PIPX="$mock"
+  unset PIPX_BIN_DIR
+  export WEATHER_CLI_PIPX
+  got=$(resolve_pipx_bin_dir)
+  if [[ "$got" == "$custom" ]]; then
+    log "ok: parses PIPX_BIN_DIR= from pipx environment"
+  else
+    err "FAIL: parse environment dump: got ${got} want ${custom}"
+    failed=1
+  fi
+
+  PATH="/usr/bin:/bin"
+  export PATH
+  WEATHER_CLI_PIPX="${tmpdir}/pipx-env"
+  export WEATHER_CLI_PIPX
+  unset PIPX_BIN_DIR
+  if verify_weather_cli; then
+    if command -v "$APP_NAME" >/dev/null 2>&1; then
+      log "ok: verify finds ${APP_NAME} on custom PIPX_BIN_DIR"
+    else
+      err "FAIL: verify succeeded but ${APP_NAME} not on PATH"
+      failed=1
+    fi
+  else
+    err "FAIL: verify with custom PIPX_BIN_DIR"
+    failed=1
+  fi
+
+  PATH="$saved_path"
+  export PATH
+  unset WEATHER_CLI_PIPX
+  if [[ -n "$saved_pipx_bin_dir" ]]; then
+    PIPX_BIN_DIR="$saved_pipx_bin_dir"
+    export PIPX_BIN_DIR
+  else
+    unset PIPX_BIN_DIR
+  fi
+  rm -rf "$tmpdir"
+
+  if [[ "$failed" -ne 0 ]]; then
+    return 1
+  fi
   return 0
 }
 
