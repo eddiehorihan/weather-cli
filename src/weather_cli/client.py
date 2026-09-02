@@ -15,7 +15,7 @@ from weather_cli.place import Place
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NWS_POINTS_URL = "https://api.weather.gov/points/{lat},{lon}"
-FORECAST_PERIODS = 6
+FORECAST_PERIODS = 14
 STATION_TRIES = 3
 
 
