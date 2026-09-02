@@ -77,6 +77,14 @@ class Place:
         return self.city
 
 
+def _require_known_state(state: str) -> str:
+    if state not in US_STATE_NAMES:
+        raise ValueError(
+            f"Unknown US state {state!r}. Use a 2-letter code like MN."
+        )
+    return state
+
+
 def normalize_state(value: str) -> str:
     text = value.strip()
     if not text:
@@ -99,16 +107,19 @@ def parse_place(text: str) -> Place:
         state = normalize_state(state_part.replace(",", " ").strip())
         if not city:
             raise ValueError("Enter a US city and state, like Minneapolis, MN.")
-        return Place(city=city, state=state or None)
+        return Place(city=city, state=_require_known_state(state) if state else None)
 
     parts = raw.split()
     if len(parts) >= 2:
         last = parts[-1]
         last_is_state = last.upper() in US_STATE_NAMES or last.lower() in _NAME_TO_ABBR
         if last_is_state:
-            return Place(city=" ".join(parts[:-1]), state=normalize_state(last))
+            return Place(city=" ".join(parts[:-1]), state=_require_known_state(normalize_state(last)))
         if len(parts) >= 3:
             last_two = " ".join(parts[-2:])
             if last_two.lower() in _NAME_TO_ABBR:
-                return Place(city=" ".join(parts[:-2]), state=normalize_state(last_two))
+                return Place(
+                    city=" ".join(parts[:-2]),
+                    state=_require_known_state(normalize_state(last_two)),
+                )
     return Place(city=raw, state=None)

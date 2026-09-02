@@ -168,6 +168,7 @@ def fetch_report(place: Place, fetch: JsonFetcher = fetch_json) -> WeatherReport
         station_name=None,
         observed_at=None,
     )
+    backup: CurrentConditions | None = None
     if stations_url:
         stations_payload = fetch(stations_url)
         features = stations_payload.get("features") or []
@@ -184,9 +185,15 @@ def fetch_report(place: Place, fetch: JsonFetcher = fetch_json) -> WeatherReport
             except RuntimeError:
                 continue
             candidate = _current_from_observation(obs, str(station_id), station_name)
-            if _usable_current(candidate):
+            if not _usable_current(candidate):
+                continue
+            if candidate.condition:
                 current = candidate
                 break
+            if backup is None:
+                backup = candidate
+        if not _usable_current(current) and backup is not None:
+            current = backup
 
     if not forecast and not _usable_current(current):
         raise RuntimeError("National Weather Service returned no current or forecast data.")

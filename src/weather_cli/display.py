@@ -115,11 +115,11 @@ def weather_icon(text: str, is_daytime: bool = True) -> list[str]:
         ]
     if any(word in blob for word in ("fog", "haze", "mist", "smoke")):
         return [
-            "                ",
             "   _ - _ - _    ",
             "    _ - _ -     ",
             "   _ - _ - _    ",
-            "                ",
+            "    _ - _ -     ",
+            "   _ - _ - _    ",
         ]
     if any(word in blob for word in ("overcast", "cloudy", "cloud")) and "partly" not in blob:
         return [
@@ -131,7 +131,7 @@ def weather_icon(text: str, is_daytime: bool = True) -> list[str]:
         ]
     if not is_daytime and any(word in blob for word in ("clear", "fair", "sunny")):
         return [
-            "                ",
+            "       .        ",
             "      .-.       ",
             "     (  '       ",
             "      `-'       ",
@@ -181,7 +181,7 @@ def render_ascii(report: WeatherReport, color: bool = True) -> str:
     title = _paint("weather-cli", BOLD, CYAN, color=color)
     place = _paint(here, BOLD, color=color)
     temp = _paint(_temp_label(current.temperature_f), BOLD, YELLOW, color=color)
-    condition = current.condition or "Current conditions unavailable"
+    condition = current.condition or ""
     bits = [_wind_label(current)]
     if current.humidity_percent is not None:
         bits.append(f"humidity {current.humidity_percent}%")
@@ -190,14 +190,17 @@ def render_ascii(report: WeatherReport, color: bool = True) -> str:
     station = current.station_id or ""
     foot_parts = [part for part in (station, observed) if part]
     footer = " · ".join(foot_parts) if foot_parts else "National Weather Service"
+    headline = f"{temp}  {condition}".rstrip()
 
     now_lines = [
         "",
-        f"  {icon[0]}{title}  ·  {place}",
-        f"  {icon[1]}{_paint('National Weather Service · USA', DIM, color=color)}",
-        f"  {icon[2]}{temp}  {condition}",
-        f"  {icon[3]}{meta}",
-        f"  {icon[4]}{_paint(footer, DIM, color=color)}",
+        f"  {title}  ·  {place}",
+        f"  {_paint('National Weather Service · USA', DIM, color=color)}",
+        f"  {icon[0]}",
+        f"  {icon[1]}{headline}",
+        f"  {icon[2]}{meta}",
+        f"  {icon[3]}{_paint(footer, DIM, color=color)}",
+        f"  {icon[4]}",
         "",
     ]
 

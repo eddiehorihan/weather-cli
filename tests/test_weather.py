@@ -131,6 +131,10 @@ class PlaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_place("   ")
 
+    def test_unknown_state_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_place("Atlantis, ZZ")
+
 
 class ReportTests(unittest.TestCase):
     def test_mocked_nws_json_is_stable(self) -> None:
@@ -162,7 +166,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unknown_place(self) -> None:
         with self.assertRaises(RuntimeError):
-            fetch_report(parse_place("Nowhereville, ZZ"), fetch=fake_fetch)
+            fetch_report(parse_place("Nowhereville, MN"), fetch=fake_fetch)
 
 
 class CliTests(unittest.TestCase):

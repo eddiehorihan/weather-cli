@@ -76,6 +76,7 @@ def resolve_place(args: argparse.Namespace, stdin, stdout) -> Place:
         stdout.write("  City and state (e.g. Minneapolis, MN): ")
         stdout.flush()
         typed = stdin.readline()
+        stdout.write("\n")
     else:
         typed = stdin.readline()
 
