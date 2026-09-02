@@ -142,13 +142,26 @@ hang; instead the CLI exits with an example invocation.
 
 ```bash
 weather-cli --no-color "Denver, CO"
+weather-cli --no-banner "Denver, CO"
+weather-cli --width 80 "Denver, CO"
 ```
+
+`--width N` is the total card width in columns (minimum 52). Without it, the
+card fills the terminal (`columns - 1`). `--no-banner` hides the WEATHER CLI
+art that sits above the card.
+
+Banner size follows terminal columns:
+
+- **>= 177** — full 10-line WEATHER CLI art, centered
+- **>= 127** — stacked WEATHER then CLI (20 lines)
+- **narrower** — compact `W E A T H E R   C L I` plus a grey rule
 
 ## What you get
 
 1. **Current conditions** — place, temperature, condition, then wind / humidity / station / time
 2. **Forecast** — several full days of NWS periods, grouped by day, each with a
-   short summary and a wrapped line of official detail
+   short summary and the full official `detailed_forecast`, wrapped with hanging
+   indents (no ellipsis cutoff)
 
 No severe-alerts product in v1.
 

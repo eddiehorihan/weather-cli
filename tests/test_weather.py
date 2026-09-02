@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import unittest
 from urllib.parse import parse_qs, urlparse
 
+from hashlib import sha256
+from weather_cli.banner import (
+    BANNER_LINES,
+    BANNER_SHA256,
+    BANNER_WIDTH,
+    COMPACT_TITLE,
+    banner_mode,
+    render_banner,
+)
 from weather_cli.cli import run
 from weather_cli.client import FORECAST_PERIODS, fetch_report
 from weather_cli.display import (
@@ -43,6 +53,44 @@ POINTS = {
         },
     }
 }
+
+LONG_DETAIL = (
+    "A chance of showers and thunderstorms. Partly sunny, with a high near 77. "
+    "Heat index values as high as 82. Southeast wind 5 to 10 mph. Chance of "
+    "precipitation is 40 percent. New rainfall amounts between a tenth and "
+    "quarter of an inch possible. Some storms may produce small hail and gusty "
+    "winds this afternoon into early evening across the metro and nearby lakes."
+)
+
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+_ALLOWED_ANSI = {"0", "1", "2", "90", "97"}
+
+
+def _visible(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
+def _squeezed(text: str) -> str:
+    parts: list[str] = []
+    for row in text.splitlines():
+        plain = _visible(row).strip()
+        if plain.startswith("│") and plain.endswith("│"):
+            plain = plain[1:-1].strip()
+        elif plain.startswith(("╭", "╰")):
+            continue
+        if plain:
+            parts.append(plain)
+    return " ".join(" ".join(parts).split())
+
+
+def _card_rows(art: str) -> list[str]:
+    rows = []
+    for row in art.splitlines():
+        plain = _visible(row)
+        if plain[:1] in {"╭", "│", "╰"}:
+            rows.append(plain)
+    return rows
+
 
 def _nws_period(
     name: str,
@@ -124,10 +172,7 @@ FORECAST = {
                 daytime=True,
                 temp=77,
                 short="Chance Showers",
-                detail=(
-                    "A chance of showers. Partly sunny, with a high near 77. "
-                    "Chance of precipitation is 40%."
-                ),
+                detail=LONG_DETAIL,
             ),
             _nws_period(
                 "Saturday Night",
@@ -283,6 +328,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Saturday", art)
         self.assertIn("Mostly clear, with a low around 67.", art)
         self.assertIn("A slight chance of showers after 3pm.", art)
+        self.assertGreaterEqual(len(LONG_DETAIL), 300)
+        self.assertIn(LONG_DETAIL, _squeezed(art))
         self.assertIn("high", art)
         self.assertIn("low", art)
         self.assertNotIn("short forecast", art.lower())
@@ -295,10 +342,12 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("\033[34m", art)
         self.assertIn("\033[90m", art)
         self.assertIn("\033[97m", art)
+        codes = set(re.findall(r"\033\[([0-9;]*)m", art))
+        self.assertTrue(codes <= _ALLOWED_ANSI)
 
     def test_ascii_narrow_width_keeps_box(self) -> None:
         report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
-        art = render_ascii(report, color=False, width=50)
+        art = render_ascii(report, color=False, width=50, banner=False)
         rows = [row for row in art.splitlines() if row]
         lengths = {len(row) for row in rows}
         self.assertEqual(len(lengths), 1)
@@ -350,6 +399,60 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             fetch_report(parse_place("Nowhereville, MN"), fetch=fake_fetch)
 
+    def test_full_detailed_forecast_no_ellipsis(self) -> None:
+        self.assertGreaterEqual(len(LONG_DETAIL), 300)
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        for width in (48, 60, 76, 100, 140, 200):
+            art = render_ascii(report, color=False, width=width, banner=False)
+            self.assertNotIn("…", art, width)
+            self.assertIn(LONG_DETAIL, _squeezed(art), width)
+            rows = _card_rows(art)
+            self.assertTrue(rows)
+            self.assertEqual({len(row) for row in rows}, {width + 4}, width)
+
+    def test_width_not_clamped(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=False, width=160, banner=False)
+        rows = _card_rows(art)
+        self.assertTrue(rows)
+        self.assertTrue(all(len(row) == 164 for row in rows))
+
+
+class BannerTests(unittest.TestCase):
+    def test_banner_sha256(self) -> None:
+        blob = "\n".join(BANNER_LINES)
+        self.assertEqual(sha256(blob.encode()).hexdigest(), BANNER_SHA256)
+        self.assertEqual(
+            BANNER_SHA256,
+            "ca68821387f71bce0b82c9ed221a87e498e488ca777eefd097422a9a5bf7f9f6",
+        )
+        self.assertEqual([len(line) for line in BANNER_LINES], [177] * 9 + [176])
+
+    def test_banner_mode_boundaries(self) -> None:
+        self.assertEqual(banner_mode(BANNER_WIDTH), "full")
+        self.assertEqual(banner_mode(177), "full")
+        self.assertEqual(banner_mode(176), "stacked")
+        self.assertEqual(banner_mode(127), "stacked")
+        self.assertEqual(banner_mode(126), "compact")
+        self.assertEqual(banner_mode(80), "compact")
+
+    def test_full_stacked_compact_render(self) -> None:
+        full = render_banner(177)
+        self.assertEqual(len(full), 10)
+        self.assertEqual(full[0], BANNER_LINES[0].ljust(177))
+        self.assertEqual(full[-1], BANNER_LINES[-1].ljust(177))
+
+        stacked = render_banner(150)
+        self.assertEqual(len(stacked), 20)
+        padded = BANNER_LINES[0].ljust(177)
+        self.assertIn(padded[0:125].rstrip(), stacked[0])
+        self.assertIn(padded[136:177].strip(), stacked[10])
+
+        compact = render_banner(80, card_width=76)
+        self.assertEqual(len(compact), 2)
+        self.assertIn(COMPACT_TITLE, compact[0])
+        self.assertEqual(len(compact[1]), 76)
+
 
 class CliTests(unittest.TestCase):
     def test_json_flag(self) -> None:
@@ -366,6 +469,10 @@ class CliTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["current"]["condition"], "Clear")
         self.assertEqual(payload["forecast"][0]["temperature_f"], 67)
+        self.assertEqual(set(payload), {"ok", "source", "location", "current", "forecast"})
+        self.assertEqual(len(payload["forecast"]), 14)
+        self.assertNotIn("W E A T H E R", stdout.getvalue())
+        self.assertNotIn("888888888o", stdout.getvalue())
 
     def test_interactive_prompt(self) -> None:
         stdout = io.StringIO()
@@ -398,6 +505,35 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("City and state required", stderr.getvalue())
+
+    def test_no_banner_and_width_flags(self) -> None:
+        stdout = io.StringIO()
+        code = run(
+            ["--no-banner", "--no-color", "--width", "64", "Minneapolis, MN"],
+            stdin=io.StringIO(""),
+            stdout=stdout,
+            stderr=io.StringIO(),
+            fetch=fake_fetch,
+        )
+        self.assertEqual(code, 0)
+        text = stdout.getvalue()
+        self.assertNotIn("W E A T H E R", text)
+        self.assertNotIn("888888888o", text)
+        rows = _card_rows(text)
+        self.assertTrue(rows)
+        self.assertTrue(all(len(row) == 64 for row in rows))
+
+    def test_width_below_minimum_rejected(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        code = run(
+            ["--width", "40", "Minneapolis, MN"],
+            stdin=io.StringIO(""),
+            stdout=stdout,
+            stderr=stderr,
+            fetch=fake_fetch,
+        )
+        self.assertEqual(code, 2)
 
     def test_compass(self) -> None:
         self.assertEqual(compass(0), "N")

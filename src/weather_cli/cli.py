@@ -9,9 +9,19 @@ from typing import Sequence
 
 from weather_cli import __version__
 from weather_cli.client import fetch_report
-from weather_cli.display import render_ascii, render_json, render_json_error
+from weather_cli.display import render_ascii, render_json, render_json_error, resolve_size
 from weather_cli.http import JsonFetcher, fetch_json
 from weather_cli.place import Place, parse_place
+
+def _total_width(value: str) -> int:
+    try:
+        width = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("width must be an integer") from exc
+    if width < 52:
+        raise argparse.ArgumentTypeError("width must be at least 52")
+    return width
+
 
 USAGE_EXAMPLES = """
 Examples:
@@ -19,6 +29,7 @@ Examples:
   weather-cli "Minneapolis, MN"
   weather-cli --city Austin --state TX
   weather-cli --json "Seattle, WA"
+  weather-cli --no-banner --width 80 "Denver, CO"
 """
 
 
@@ -48,6 +59,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in the ASCII view",
+    )
+    parser.add_argument(
+        "--no-banner",
+        action="store_true",
+        help="Hide the WEATHER CLI banner above the card",
+    )
+    parser.add_argument(
+        "--width",
+        type=_total_width,
+        metavar="N",
+        help="Total card width in columns (minimum 52). Default: fill the terminal.",
     )
     parser.add_argument(
         "--version",
@@ -133,7 +155,20 @@ def run(
         stdout.write(render_json(report) + "\n")
     else:
         color = wants_color(args, stdout)
-        stdout.write(render_ascii(report, color=color) + "\n")
+        _, lines = resolve_size()
+        inner = None
+        if args.width is not None:
+            inner = max(48, int(args.width) - 4)
+        stdout.write(
+            render_ascii(
+                report,
+                color=color,
+                width=inner,
+                rows=lines,
+                banner=not args.no_banner,
+            )
+            + "\n"
+        )
     return 0
 
 
