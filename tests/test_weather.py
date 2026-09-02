@@ -16,7 +16,7 @@ from weather_cli.display import (
     render_json,
     weather_icon,
 )
-from weather_cli.models import ForecastPeriod
+from weather_cli.models import CurrentConditions, ForecastPeriod, Location, WeatherReport
 from weather_cli.place import parse_place
 
 
@@ -331,6 +331,20 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([label for label, _ in groups], ["Today", "Wednesday"])
         self.assertEqual(len(groups[0][1]), 2)
         self.assertEqual(len(groups[1][1]), 2)
+
+        holiday = [
+            ForecastPeriod("Labor Day", True, 79, "F", "5 mph E", "Sunny", "Sunny."),
+            ForecastPeriod("Monday Night", False, 63, "F", "10 mph SE", "Cloudy", "Cloudy."),
+        ]
+        self.assertEqual([label for label, _ in group_forecast(holiday)], ["Labor Day", "Monday"])
+        report = WeatherReport(
+            location=Location("X", "Austin", "TX", "Austin, TX", 30.2, -97.7),
+            current=CurrentConditions("Sunny", 80, 26.7, 5, 180, 40, "KAUS", None, None),
+            forecast=holiday,
+        )
+        art = render_ascii(report, color=False, width=76)
+        self.assertIn("Labor Day", art)
+        self.assertIn("Monday Night", art)
 
     def test_unknown_place(self) -> None:
         with self.assertRaises(RuntimeError):

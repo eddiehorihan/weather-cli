@@ -407,7 +407,8 @@ def _forecast_block(report: WeatherReport, width: int, color: bool) -> list[str]
     for index, (label, periods) in enumerate(groups):
         if index:
             lines.append("")
-        lines.append("  " + _paint(label, BOLD, WHITE, color=color))
+        heading = periods[0].name if len(periods) == 1 else label
+        lines.append("  " + _paint(heading, BOLD, WHITE, color=color))
         for period in periods:
             lines.extend(_period_lines(period, width, color))
     lines.append("")
