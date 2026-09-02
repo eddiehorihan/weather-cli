@@ -9,11 +9,10 @@ import textwrap
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from weather_cli.banner import banner_mode, render_banner
 from weather_cli.models import CurrentConditions, ForecastPeriod, WeatherReport
 
 MIN_WIDTH = 48
-MAX_WIDTH = 76
-DEFAULT_WIDTH = 76
 ICON_WIDTH = 12
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 
@@ -22,6 +21,10 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 GREY = "\033[90m"
 WHITE = "\033[97m"
+
+CREDIT_LEFT = "NWS  ·  api.weather.gov"
+CREDIT_RIGHT = "place: OpenStreetMap Nominatim"
+CREDIT_FULL = f"{CREDIT_LEFT}  ·  {CREDIT_RIGHT}"
 
 
 def _paint(text: str, *codes: str, color: bool) -> str:
@@ -56,7 +59,7 @@ def _truncate(text: str, width: int) -> str:
     return text[: width - 1] + "…"
 
 
-def _wrap_text(text: str, width: int, max_lines: int = 2) -> list[str]:
+def _wrap_text(text: str, width: int, max_lines: int | None = None) -> list[str]:
     cleaned = " ".join(text.split())
     if not cleaned:
         return []
@@ -68,7 +71,7 @@ def _wrap_text(text: str, width: int, max_lines: int = 2) -> list[str]:
         break_long_words=True,
         break_on_hyphens=True,
     )
-    if len(wrapped) <= max_lines:
+    if max_lines is None or len(wrapped) <= max_lines:
         return wrapped
     last = wrapped[max_lines - 1]
     if len(last) >= width:
@@ -76,6 +79,23 @@ def _wrap_text(text: str, width: int, max_lines: int = 2) -> list[str]:
     else:
         last = last.rstrip(" .") + "…"
     return wrapped[: max_lines - 1] + [last]
+
+
+def _hanging_lines(text: str, width: int, hang: int) -> list[str]:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return []
+    if width < 8:
+        return [_truncate(cleaned, max(width, 1))]
+    hang = max(int(hang), 0)
+    wrapper = textwrap.TextWrapper(
+        width=width,
+        subsequent_indent=" " * hang,
+        break_long_words=True,
+        break_on_hyphens=True,
+        drop_whitespace=True,
+    )
+    return wrapper.wrap(cleaned)
 
 
 def _spread(left: str, right: str, width: int) -> str:
@@ -96,14 +116,27 @@ def _card(lines: list[str], width: int, color: bool) -> list[str]:
     return [top, *body, bottom]
 
 
-def resolve_width(width: int | None = None) -> int:
-    if width is not None:
-        return max(MIN_WIDTH, min(MAX_WIDTH, int(width)))
+def resolve_size(
+    columns: int | None = None,
+    rows: int | None = None,
+) -> tuple[int, int]:
+    """Terminal size. Honors COLUMNS/LINES via shutil.get_terminal_size."""
     try:
-        cols = shutil.get_terminal_size(fallback=(80, 24)).columns
+        size = shutil.get_terminal_size(fallback=(80, 24))
+        term_cols, term_rows = int(size.columns), int(size.lines)
     except OSError:
-        cols = 80
-    return max(MIN_WIDTH, min(MAX_WIDTH, cols - 4))
+        term_cols, term_rows = 80, 24
+    cols = int(columns) if columns is not None else term_cols
+    lines = int(rows) if rows is not None else term_rows
+    return max(1, cols), max(1, lines)
+
+
+def resolve_width(width: int | None = None, columns: int | None = None) -> int:
+    """Inner card width. Explicit values keep test semantics; auto fills the terminal."""
+    if width is not None:
+        return max(MIN_WIDTH, int(width))
+    cols, _ = resolve_size(columns=columns)
+    return max(MIN_WIDTH, cols - 5)
 
 
 def compass(degrees: int | None) -> str:
@@ -290,7 +323,31 @@ def _meta_row(label: str, value: str, color: bool) -> str:
     )
 
 
-def _current_block(report: WeatherReport, width: int, color: bool) -> list[str]:
+def _meta_wrapped(label: str, value: str, width: int, color: bool) -> list[str]:
+    hang = 16
+    parts = _hanging_lines(value, max(width - hang, 8), hang=0)
+    if not parts:
+        return [_meta_row(label, "", color)]
+    lines = [_meta_row(label, parts[0], color)]
+    for part in parts[1:]:
+        lines.append((" " * hang) + _paint(part, WHITE, color=color))
+    return lines
+
+
+def _header_lines(here: str, width: int, color: bool) -> list[str]:
+    place = _paint(here, BOLD, WHITE, color=color)
+    brand = _paint("weather-cli", GREY, color=color)
+    if 2 + len(here) + 1 + len("weather-cli") <= width:
+        return [_spread(f"  {place}", brand, width)]
+    place_parts = _wrap_text(here, max(width - 2, 8)) or [here]
+    lines = ["  " + _paint(part, BOLD, WHITE, color=color) for part in place_parts]
+    lines.append(_spread("", brand, width))
+    return lines
+
+
+def _current_block(
+    report: WeatherReport, width: int, color: bool, *, dense: bool
+) -> list[str]:
     loc = report.location
     here = f"{loc.city}, {loc.state}".strip(", ")
     current = report.current
@@ -302,9 +359,7 @@ def _current_block(report: WeatherReport, width: int, color: bool) -> list[str]:
         is_day = report.forecast[0].is_daytime
     icon = weather_icon(icon_source, is_daytime=is_day)
 
-    place = _paint(here, BOLD, WHITE, color=color)
-    brand = _paint("weather-cli", GREY, color=color)
-    header = _spread(f"  {place}", brand, width)
+    header = _header_lines(here, width, color)
 
     temp = _paint(_temp_label(current.temperature_f), BOLD, WHITE, color=color)
     celsius = _temp_c_label(current.temperature_c)
@@ -338,24 +393,23 @@ def _current_block(report: WeatherReport, width: int, color: bool) -> list[str]:
     if current.station_id:
         station = current.station_id
         if current.station_name:
-            extra = width - 16 - len(station)
-            if extra >= 6:
-                station = f"{station}  {_truncate(current.station_name, extra)}"
-        meta.append(_meta_row("station", station, color))
+            station = f"{station}  {current.station_name}"
+        meta.extend(_meta_wrapped("station", station, width, color))
     observed = format_observed_at(current.observed_at, loc.timezone)
     if observed:
         meta.append(_meta_row("observed", observed, color))
     if not meta:
         meta.append(_meta_row("source", "National Weather Service", color))
 
+    gap = [] if dense else [""]
     return [
-        "",
-        header,
-        "",
+        *gap,
+        *header,
+        *gap,
         *icon_lines,
-        "",
+        *gap,
         *meta,
-        "",
+        *gap,
     ]
 
 
@@ -375,67 +429,94 @@ def _period_lines(period: ForecastPeriod, width: int, color: bool) -> list[str]:
         temp = f"{period.temperature_f}°"
     indent = "    "
     prefix_len = 17  # "    high    83°   "
-    summary = _truncate(_period_summary(period), max(width - prefix_len, 8))
+    summary_width = max(width - prefix_len, 8)
+    summary_parts = _hanging_lines(_period_summary(period), summary_width, hang=0)
+    if not summary_parts:
+        summary_parts = [""]
     head = (
         indent
         + _paint(f"{kind:<4}", GREY, color=color)
         + "  "
         + _paint(f"{temp:>4}", BOLD, WHITE, color=color)
         + "   "
-        + _paint(summary, WHITE, color=color)
+        + _paint(summary_parts[0], WHITE, color=color)
     )
     lines = [head]
+    hang = " " * prefix_len
+    for extra in summary_parts[1:]:
+        lines.append(_paint(f"{hang}{extra}", WHITE, color=color))
     detail = period.detailed_forecast.strip()
     short = period.short_forecast.strip()
     if detail and detail.rstrip(".").lower() != short.rstrip(".").lower():
-        for wrapped in _wrap_text(detail, width - 4, max_lines=2):
+        detail_width = max(width - 4, 8)
+        for wrapped in _hanging_lines(detail, detail_width, hang=4):
             lines.append(_paint(f"{indent}{wrapped}", DIM, color=color))
     return lines
 
 
-def _forecast_block(report: WeatherReport, width: int, color: bool) -> list[str]:
+def _forecast_block(
+    report: WeatherReport, width: int, color: bool, *, dense: bool
+) -> list[str]:
     lines = [
         "  " + _paint("Forecast", BOLD, WHITE, color=color),
-        "",
+        *([] if dense else [""]),
     ]
     if not report.forecast:
         lines.append("  " + _paint("No forecast periods returned.", DIM, color=color))
-        lines.append("")
+        if not dense:
+            lines.append("")
         return lines
 
     groups = group_forecast(report.forecast)
     for index, (label, periods) in enumerate(groups):
-        if index:
+        if index and not dense:
             lines.append("")
         heading = periods[0].name if len(periods) == 1 else label
         lines.append("  " + _paint(heading, BOLD, WHITE, color=color))
         for period in periods:
             lines.extend(_period_lines(period, width, color))
-    lines.append("")
+    if not dense:
+        lines.append("")
     return lines
+
+
+def _credit_lines(width: int, color: bool) -> list[str]:
+    text_width = max(width - 2, 1)
+    if len(CREDIT_FULL) <= text_width:
+        return [_paint("  " + CREDIT_FULL, GREY, color=color)]
+    return [
+        _paint("  " + CREDIT_LEFT, GREY, color=color),
+        _paint("  " + CREDIT_RIGHT, GREY, color=color),
+    ]
 
 
 def render_ascii(
     report: WeatherReport,
     color: bool = True,
     width: int | None = None,
+    rows: int | None = None,
+    banner: bool = True,
 ) -> str:
-    inner = resolve_width(width)
+    cols, lines = resolve_size(rows=rows)
+    inner = resolve_width(width, columns=cols)
+    dense = lines < 30
     rule = _paint("  " + "─" * max(inner - 2, 1), GREY, color=color)
-    credit = _paint(
-        _truncate("  NWS  ·  api.weather.gov  ·  place: OpenStreetMap Nominatim", inner),
-        GREY,
-        color=color,
-    )
     body = [
-        *_current_block(report, inner, color),
+        *_current_block(report, inner, color, dense=dense),
         rule,
-        "",
-        *_forecast_block(report, inner, color),
-        credit,
-        "",
+        *([] if dense else [""]),
+        *_forecast_block(report, inner, color, dense=dense),
+        *_credit_lines(inner, color),
+        *([] if dense else [""]),
     ]
-    return "\n".join(_card(body, inner, color))
+    card = _card(body, inner, color)
+    if not banner:
+        return "\n".join(card)
+    total = inner + 4
+    art = [_paint(line, GREY, color=color) for line in render_banner(cols, card_width=total)]
+    if banner_mode(cols) != "compact":
+        art.append("")
+    return "\n".join([*art, *card])
 
 
 def render_json(report: WeatherReport) -> str:
