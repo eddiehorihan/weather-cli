@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weather-cli"
+version = "0.1.0"
+description = "A easy to use, fun weather CLI for agents and you"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Eddie Horihan" }]
+keywords = ["weather", "cli", "nws", "forecast"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/eddiehorihan/weather-cli"
+Repository = "https://github.com/eddiehorihan/weather-cli"
+
+[project.scripts]
+weather-cli = "weather_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
