@@ -384,7 +384,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("low", art)
         self.assertIn("83°", art)
         self.assertIn("68° / 83°", art)
-        self.assertTrue("-o-" in art or "(`." in art)
+        self.assertTrue("-o-" in art or "* )" in art)
         self.assertIn("low ━━━ high", art)
         self.assertNotIn("short forecast", art.lower())
 
@@ -632,21 +632,40 @@ class LayoutTests(unittest.TestCase):
 
     def test_icon_kind_and_mini_glyph(self) -> None:
         cases = (
-            ("Chance Showers And Thunderstorms", True, "thunder"),
-            ("Mostly Clear", False, "moon"),
-            ("Partly Cloudy", False, "partly-night"),
-            ("Mostly Cloudy", True, "partly"),
-            ("Windy", True, "wind"),
-            ("Sunny", True, "sun"),
+            ("Chance Showers And Thunderstorms", True, "thunder", "(!)"),
+            ("Mostly Clear", False, "moon", "* )"),
+            ("Partly Cloudy", False, "partly-night", "*_)"),
+            ("Mostly Cloudy", True, "partly", "o_)"),
+            ("Windy", True, "wind", "~~~"),
+            ("Sunny", True, "sun", "-o-"),
         )
-        for text, daytime, kind in cases:
+        for text, daytime, kind, expected in cases:
             self.assertEqual(icon_kind(text, daytime), kind, text)
             glyph = mini_glyph(text, daytime)
+            self.assertEqual(glyph, expected, text)
             self.assertEqual(len(glyph), 3, text)
             self.assertTrue(glyph.isascii(), text)
+        expected_mini = {
+            "sun": "-o-",
+            "moon": "* )",
+            "partly": "o_)",
+            "partly-night": "*_)",
+            "cloud": "(_)",
+            "rain": ".:.",
+            "snow": "***",
+            "thunder": "(!)",
+            "fog": "===",
+            "wind": "~~~",
+        }
+        self.assertEqual(MINI, expected_mini)
         for kind, glyph in MINI.items():
             self.assertEqual(len(glyph), 3, kind)
             self.assertTrue(glyph.isascii(), kind)
+            self.assertNotIn("/", glyph)
+            self.assertNotIn("'", glyph)
+            self.assertNotIn("\\", glyph)
+            self.assertNotIn('"', glyph)
+            self.assertNotIn("`", glyph)
 
     def test_temp_axis_and_bar(self) -> None:
         wide = [
@@ -697,7 +716,7 @@ class LayoutTests(unittest.TestCase):
     def test_strip_rows_align(self) -> None:
         report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
         art = render_ascii(report, color=False, width=76, banner=False)
-        glyphs = r"(?:-o-|\(\.`|o_\)|`_\)|\(_\)|'''|\*\*\*|///|-_-|~~~)"
+        glyphs = r"(?:-o-|\* \)|\*_\)|o_\)|\(_\)|\.:\.|\*\*\*|\(!\)|===|~~~)"
         pat = re.compile(rf"  {glyphs}  .{{4}} ([─━●]+) ")
         bars: list[tuple[int, int]] = []
         for row in _card_rows(art):
