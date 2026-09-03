@@ -158,10 +158,24 @@ Banner size follows terminal columns:
 
 ## What you get
 
-1. **Current conditions** — place, temperature, condition, then wind / humidity / station / time
-2. **Forecast** — several full days of NWS periods, grouped by day, each with a
-   short summary and the full official `detailed_forecast`, wrapped with hanging
-   indents (no ellipsis cutoff)
+1. **Hero** — 12×5 condition icon beside 3-row block digits (`█ ▀ ▄`), the
+   condition, and the exact temperature (`71.6°F · 22°C`) so tenths stay visible
+2. **Stat tiles** — wind, humidity, observed time, and station as a 2- or 4-wide
+   grid (beside the hero once the card is wide enough)
+3. **Week strip** — one row per day: mini glyph, low, a shared-axis `─━━━─`
+   range bar, high
+4. **Day ledger** — every NWS period with a glyph and the full official
+   `detailed_forecast` (no ellipsis). On wide terminals, day and night sit
+   side by side
+
+Card layout follows inner width (total columns − 4):
+
+| Inner width | Total | Hero / tiles | Forecast ledger |
+| --- | --- | --- | --- |
+| 48–63 | 52–67 | icon + digits; 2 tiles below | single column |
+| 64–95 | 68–99 | icon + digits; 4 tiles below | single column |
+| 96–127 | 100–131 | tiles beside the hero | single column |
+| ≥ 128 | ≥ 132 | tiles beside the hero | day │ night columns |
 
 No severe-alerts product in v1.
 

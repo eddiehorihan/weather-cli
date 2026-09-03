@@ -20,12 +20,21 @@ from weather_cli.banner import (
 from weather_cli.cli import run
 from weather_cli.client import FORECAST_PERIODS, fetch_report
 from weather_cli.display import (
+    BLOCK_DIGITS,
+    block_number,
     compass,
     group_forecast,
+    group_hi_lo,
+    icon_kind,
+    layout_tier,
+    mini_glyph,
     render_ascii,
     render_json,
+    temp_axis,
+    temp_bar,
     weather_icon,
 )
+from weather_cli.glyphs import MINI
 from weather_cli.models import CurrentConditions, ForecastPeriod, Location, WeatherReport
 from weather_cli.place import parse_place
 
@@ -90,6 +99,47 @@ def _card_rows(art: str) -> list[str]:
         if plain[:1] in {"╭", "│", "╰"}:
             rows.append(plain)
     return rows
+
+
+def _column_texts(art: str) -> tuple[str, str]:
+    """Split card rows on an interior day│night gutter; other rows stay left."""
+    left_parts: list[str] = []
+    right_parts: list[str] = []
+    for row in art.splitlines():
+        plain = _visible(row)
+        if plain.startswith(("╭", "╰")):
+            continue
+        if plain.startswith("│") and plain.endswith("│"):
+            inner = plain[1:-1]
+            if " │ " in inner:
+                left, right = inner.split(" │ ", 1)
+                left_parts.append(left.strip())
+                right_parts.append(right.strip())
+            else:
+                left_parts.append(inner.strip())
+        elif plain.strip():
+            left_parts.append(plain.strip())
+    left = " ".join(" ".join(left_parts).split())
+    right = " ".join(" ".join(right_parts).split())
+    return left, right
+
+
+def _sample_report(**overrides: object) -> WeatherReport:
+    report = WeatherReport(
+        location=Location("X", "Maple Grove", "MN", "Maple Grove, MN", 45.1, -93.4, "America/Chicago"),
+        current=CurrentConditions(
+            "Clear", 84.2, 29.0, 8.1, 135, 62, "KMIC", "Minneapolis, Crystal Airport",
+            "2026-09-02T20:10:00+00:00",
+        ),
+        forecast=[],
+    )
+    if overrides:
+        report = WeatherReport(
+            location=overrides.get("location", report.location),  # type: ignore[arg-type]
+            current=overrides.get("current", report.current),  # type: ignore[arg-type]
+            forecast=overrides.get("forecast", report.forecast),  # type: ignore[arg-type]
+        )
+    return report
 
 
 def _nws_period(
@@ -332,6 +382,10 @@ class ReportTests(unittest.TestCase):
         self.assertIn(LONG_DETAIL, _squeezed(art))
         self.assertIn("high", art)
         self.assertIn("low", art)
+        self.assertIn("83°", art)
+        self.assertIn("68° / 83°", art)
+        self.assertTrue("-o-" in art or "(`." in art)
+        self.assertIn("low ━━━ high", art)
         self.assertNotIn("short forecast", art.lower())
 
     def test_ascii_grey_white_not_rainbow(self) -> None:
@@ -363,6 +417,8 @@ class ReportTests(unittest.TestCase):
             ("Overcast", True),
             ("Clear", False),
             ("Sunny", True),
+            ("Windy", True),
+            ("Partly Cloudy", False),
         )
         for text, daytime in samples:
             icon = weather_icon(text, is_daytime=daytime)
@@ -405,7 +461,11 @@ class ReportTests(unittest.TestCase):
         for width in (48, 60, 76, 100, 140, 200):
             art = render_ascii(report, color=False, width=width, banner=False)
             self.assertNotIn("…", art, width)
-            self.assertIn(LONG_DETAIL, _squeezed(art), width)
+            if layout_tier(width) == "l":
+                left, _right = _column_texts(art)
+                self.assertIn(LONG_DETAIL, left, width)
+            else:
+                self.assertIn(LONG_DETAIL, _squeezed(art), width)
             rows = _card_rows(art)
             self.assertTrue(rows)
             self.assertEqual({len(row) for row in rows}, {width + 4}, width)
@@ -538,6 +598,215 @@ class CliTests(unittest.TestCase):
     def test_compass(self) -> None:
         self.assertEqual(compass(0), "N")
         self.assertEqual(compass(225), "SW")
+
+
+class LayoutTests(unittest.TestCase):
+    def test_layout_tiers(self) -> None:
+        self.assertEqual(layout_tier(48), "xs")
+        self.assertEqual(layout_tier(63), "xs")
+        self.assertEqual(layout_tier(64), "s")
+        self.assertEqual(layout_tier(95), "s")
+        self.assertEqual(layout_tier(96), "m")
+        self.assertEqual(layout_tier(127), "m")
+        self.assertEqual(layout_tier(128), "l")
+        self.assertEqual(layout_tier(200), "l")
+
+    def test_block_digits(self) -> None:
+        allowed = set("█▀▄ ")
+        for key, rows in BLOCK_DIGITS.items():
+            self.assertEqual(len(rows), 3, key)
+            self.assertTrue(all(len(row) == 3 for row in rows), key)
+            self.assertTrue(all(set(row) <= allowed for row in rows), key)
+        for value in (84, -12, 105):
+            rows = block_number(value)
+            self.assertEqual(len(rows), 3, value)
+            self.assertEqual(len({len(row) for row in rows}), 1, value)
+        report = _sample_report(
+            current=CurrentConditions(None, None, None, None, None, None, None, None, None),
+        )
+        art = render_ascii(report, color=False, width=76, banner=False)
+        self.assertIn("n/a", art)
+        self.assertNotIn("█", art)
+        self.assertNotIn("▀", art)
+        self.assertNotIn("▄", art)
+
+    def test_icon_kind_and_mini_glyph(self) -> None:
+        cases = (
+            ("Chance Showers And Thunderstorms", True, "thunder"),
+            ("Mostly Clear", False, "moon"),
+            ("Partly Cloudy", False, "partly-night"),
+            ("Mostly Cloudy", True, "partly"),
+            ("Windy", True, "wind"),
+            ("Sunny", True, "sun"),
+        )
+        for text, daytime, kind in cases:
+            self.assertEqual(icon_kind(text, daytime), kind, text)
+            glyph = mini_glyph(text, daytime)
+            self.assertEqual(len(glyph), 3, text)
+            self.assertTrue(glyph.isascii(), text)
+        for kind, glyph in MINI.items():
+            self.assertEqual(len(glyph), 3, kind)
+            self.assertTrue(glyph.isascii(), kind)
+
+    def test_temp_axis_and_bar(self) -> None:
+        wide = [
+            ForecastPeriod("Today", True, 61, "F", "5 mph", "Sunny", "Sunny."),
+            ForecastPeriod("Tonight", False, 73, "F", "5 mph", "Clear", "Clear."),
+        ]
+        self.assertEqual(temp_axis(wide), (60, 75))
+        tight = [
+            ForecastPeriod("Today", True, 70, "F", "5 mph", "Sunny", "Sunny."),
+            ForecastPeriod("Tonight", False, 72, "F", "5 mph", "Clear", "Clear."),
+        ]
+        tmin, tmax = temp_axis(tight)
+        self.assertEqual(tmin % 5, 0)
+        self.assertEqual(tmax % 5, 0)
+        self.assertGreaterEqual(tmax - tmin, 10)
+
+        axis = (60, 80)
+        bar = temp_bar(68, 78, axis, 20)
+        self.assertEqual(len(bar), 20)
+        self.assertIn("━", bar)
+        self.assertTrue(set(bar) <= {"─", "━"})
+        single = temp_bar(70, None, axis, 20)
+        self.assertEqual(len(single), 20)
+        self.assertEqual(single.count("●"), 1)
+        self.assertTrue(set(single) <= {"─", "●"})
+        empty = temp_bar(None, None, axis, 12)
+        self.assertEqual(empty, "─" * 12)
+        inverted = temp_bar(80, 60, axis, 11)
+        normal = temp_bar(60, 80, axis, 11)
+        self.assertEqual(inverted, normal)
+        self.assertTrue(inverted.startswith("━") or "━" in inverted)
+
+    def test_group_hi_lo(self) -> None:
+        pair = [
+            ForecastPeriod("Today", True, 80, "F", "5 mph", "Sunny", "Sunny."),
+            ForecastPeriod("Tonight", False, 60, "F", "5 mph", "Clear", "Clear."),
+        ]
+        self.assertEqual(group_hi_lo(pair), (80, 60))
+        lone = [ForecastPeriod("Tonight", False, 67, "F", "5 mph", "Clear", "Clear.")]
+        self.assertEqual(group_hi_lo(lone), (None, 67))
+        triple = [
+            ForecastPeriod("Today", True, 80, "F", "5 mph", "Sunny", "Sunny."),
+            ForecastPeriod("This Afternoon", True, 75, "F", "5 mph", "Cloudy", "Cloudy."),
+            ForecastPeriod("Tonight", False, 60, "F", "5 mph", "Clear", "Clear."),
+        ]
+        self.assertEqual(group_hi_lo(triple), (80, 60))
+
+    def test_strip_rows_align(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=False, width=76, banner=False)
+        glyphs = r"(?:-o-|\(\.`|o_\)|`_\)|\(_\)|'''|\*\*\*|///|-_-|~~~)"
+        pat = re.compile(rf"  {glyphs}  .{{4}} ([─━●]+) ")
+        bars: list[tuple[int, int]] = []
+        for row in _card_rows(art):
+            if not row.startswith("│"):
+                continue
+            inner = row[2:-2]
+            match = pat.search(inner)
+            if match:
+                bars.append((match.start(1), len(match.group(1))))
+        self.assertGreaterEqual(len(bars), 2)
+        self.assertEqual(len({span for span in bars}), 1)
+
+    def test_two_column_ledger_wide(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=False, width=140, banner=False)
+        same = [
+            row
+            for row in _card_rows(art)
+            if "Chance Showers" in row and "Showers Likely" in row
+        ]
+        self.assertTrue(same)
+        self.assertIn(" │ ", _visible(same[0]))
+        in_tonight = False
+        for row in _card_rows(art):
+            if not row.startswith("│"):
+                continue
+            inner = row[2:-2]
+            if inner.startswith("  Tonight ─"):
+                in_tonight = True
+            elif in_tonight and inner.startswith("  ") and not inner.startswith("    ") and "─" in inner:
+                break
+            if in_tonight:
+                self.assertNotIn("│", inner, inner)
+
+    def test_single_column_below_l(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        art = render_ascii(report, color=False, width=100, banner=False)
+        for row in _card_rows(art):
+            if row.startswith("│") and row.endswith("│"):
+                self.assertNotIn("│", row[1:-1], row)
+
+    def test_tiles_wrap_long_station(self) -> None:
+        name = "West Lake Michigan Shoreline Observation Station Annex Bldg."
+        self.assertEqual(len(name), 60)
+        report = _sample_report(
+            current=CurrentConditions(
+                "Clear", 70, 21, 5, 180, 40, "KXXX", name, None
+            ),
+        )
+        art = render_ascii(report, color=False, width=64, banner=False)
+        self.assertNotIn("…", art)
+        rows = _card_rows(art)
+        self.assertEqual({len(row) for row in rows}, {68})
+        self.assertIn(name, _squeezed(art))
+
+    def test_summary_wind_never_splits(self) -> None:
+        report = _sample_report(
+            forecast=[
+                ForecastPeriod(
+                    "Today",
+                    True,
+                    89,
+                    "F",
+                    "5 to 10 mph SE",
+                    "Slight Chance Showers And Thunderstorms",
+                    "A slight chance of showers.",
+                )
+            ]
+        )
+        art = render_ascii(report, color=False, width=48, banner=False)
+        self.assertIn("· 5 to 10 mph SE", _visible(art))
+        self.assertNotIn("5 · to", _visible(art))
+        found = False
+        for row in _card_rows(art):
+            if "· 5 to 10 mph SE" in row:
+                found = True
+        self.assertTrue(found)
+
+    def test_dense_drops_spacers(self) -> None:
+        report = fetch_report(parse_place("Minneapolis, MN"), fetch=fake_fetch)
+        short = render_ascii(report, color=False, width=76, rows=20, banner=False)
+        tall = render_ascii(report, color=False, width=76, rows=50, banner=False)
+        self.assertLess(len(short.splitlines()), len(tall.splitlines()))
+        rows = [row[2:-2] for row in _card_rows(short) if row.startswith("│")]
+        forecast_at = next(
+            index for index, row in enumerate(rows) if row.startswith("  Forecast")
+        )
+        following = rows[forecast_at + 1]
+        self.assertTrue(following.strip(), "blank card row after Forecast in dense mode")
+
+    def test_holiday_label_hard_cut_no_ellipsis(self) -> None:
+        report = _sample_report(
+            forecast=[
+                ForecastPeriod(
+                    "Washington's Birthday",
+                    True,
+                    45,
+                    "F",
+                    "10 mph NW",
+                    "Sunny",
+                    "Sunny, with a high near 45.",
+                )
+            ]
+        )
+        art = render_ascii(report, color=False, width=48, banner=False)
+        self.assertNotIn("…", art)
+        rows = _card_rows(art)
+        self.assertEqual({len(row) for row in rows}, {52})
+        self.assertIn("Washington's Birthday", art)
 
 
 if __name__ == "__main__":
