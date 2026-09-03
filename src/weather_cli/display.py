@@ -562,12 +562,12 @@ def _summary_parts(period: ForecastPeriod, summary_width: int) -> list[str]:
         if len(combined) <= summary_width:
             return [combined]
         parts = _wrap_text(short, summary_width) or [short]
-        wind_line = f"  ·  {wind}"
+        wind_line = f"· {wind}"
         if len(wind_line) <= summary_width:
             parts.append(wind_line)
         else:
-            wrapped_wind = _wrap_text(wind, max(summary_width - 5, 1)) or [wind]
-            parts.append(f"  ·  {wrapped_wind[0]}")
+            wrapped_wind = _wrap_text(wind, max(summary_width - 2, 1)) or [wind]
+            parts.append(f"· {wrapped_wind[0]}")
             parts.extend(wrapped_wind[1:])
         return parts
     if short:

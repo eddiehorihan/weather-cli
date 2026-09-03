@@ -377,7 +377,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Thursday", art)
         self.assertIn("Saturday", art)
         self.assertIn("Mostly clear, with a low around 67.", art)
-        self.assertIn("A slight chance of showers after 3pm.", art)
+        self.assertIn("A slight chance of showers after 3pm.", _squeezed(art))
         self.assertGreaterEqual(len(LONG_DETAIL), 300)
         self.assertIn(LONG_DETAIL, _squeezed(art))
         self.assertIn("high", art)
